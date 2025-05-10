@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pytest_cache/
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+# Audio recordings and transcripts (might contain sensitive data)
+recordings/*.wav
+transcripts/*.txt
+testing_STT/transcripts/*.txt
+
+# Whisper model cache
+.cache/whisper/
+.cache/huggingface/
+
+# Benchmark results and plots
+testing_STT/benchmark_plots/
+testing_STT/whisper_benchmark_results_*.json
+
+# Exclude temp.wav from gitignore for testing purposes
+!recordings/temp.wav
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Local configuration files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+config.local.json
+
+# FFmpeg output
+*.mp3
+*.mp4
+*.wav
+*.aac 
+
+venv/

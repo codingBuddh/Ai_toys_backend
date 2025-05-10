@@ -1,0 +1,49 @@
+name: Python Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, '3.10']
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install FFmpeg
+      run: sudo apt-get update && sudo apt-get install -y ffmpeg
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools setuptools-rust
+        pip install -r requirements.txt
+        
+    - name: Create required directories
+      run: |
+        mkdir -p recordings transcripts testing_STT/transcripts testing_STT/benchmark_plots
+        
+    - name: Create sample audio file
+      run: |
+        # Create a silent 3-second WAV file for testing
+        ffmpeg -f lavfi -i "sine=frequency=1000:duration=3" -ac 1 -ar 16000 recordings/temp.wav
+        
+    - name: Test imports
+      run: |
+        python -c "import whisper; print('Whisper import successful')"
+        python -c "import torch; print('Torch import successful')"
+        python -c "import fastapi; print('FastAPI import successful')"
+        
+    - name: Test audio processor loading
+      run: |
+        python -c "import sys; sys.path.append('.'); from app.utils.audio_processor import load_model; print('Audio processor import successful')" 
