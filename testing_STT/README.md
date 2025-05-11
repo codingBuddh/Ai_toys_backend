@@ -51,6 +51,12 @@ This will:
 - Benchmark results are saved as JSON files
 - Visualizations are saved in the `benchmark_plots/` directory
 
+## Technical Notes
+
+- All tests now run on CPU only for better deployment compatibility
+- The transformers dependency has been removed to reduce memory requirements
+- The benchmarks will measure actual model size, load time, and transcription speed
+
 ## Model Information
 
 | Model      | Size (MB) | English-only | Speed (RTF) | Accuracy |

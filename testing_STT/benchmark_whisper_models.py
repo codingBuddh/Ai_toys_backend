@@ -17,7 +17,6 @@ script_dir = Path(__file__).parent.absolute()
 parent_dir = script_dir.parent
 sys.path.append(str(parent_dir))
 
-import torch
 import whisper
 
 # Configuration
@@ -70,7 +69,7 @@ async def benchmark_model(model_info, audio_file_path):
         "model_name": model_name,
         "english_only": is_english,
         "description": description,
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "device": "cpu",  # Fixed to CPU since we removed GPU support
     }
     
     # 1. Measure model loading time
@@ -135,7 +134,7 @@ async def run_benchmark(audio_file_path):
     print(f"WHISPER MODEL BENCHMARK - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*80}")
     print(f"Audio file: {audio_file_path}")
-    print(f"Device: {'CUDA/GPU' if torch.cuda.is_available() else 'CPU'}")
+    print(f"Device: CPU (GPU support removed)")
     
     if not os.path.exists(audio_file_path):
         print(f"Error: Audio file not found at {audio_file_path}")

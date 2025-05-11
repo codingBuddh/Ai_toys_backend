@@ -6,7 +6,7 @@ This project provides a real-time audio streaming server for ESP32 devices that 
 
 - WebSocket server for receiving audio streams from ESP32 devices
 - Real-time conversion of audio streams to WAV format
-- Speech-to-text processing using Whisper models
+- Speech-to-text processing using Whisper models (CPU-only)
 - Configurable model selection (tiny, base, small, medium, large)
 - Comprehensive benchmarking tools for model comparison
 - Performance metrics tracking
@@ -75,6 +75,12 @@ Configure your ESP32 to connect to the WebSocket server and stream audio data. T
 - Python 3.8 or higher
 - FFmpeg installed on your system
 - Rust (for tiktoken, a dependency of Whisper)
+
+## Server Deployment Notes
+
+- This server is configured to use CPU-only processing for better compatibility with resource-constrained servers
+- The transformers library dependency has been removed to reduce the installation footprint
+- If you're deploying on a server with limited memory, this version should be more stable
 
 ## License
 

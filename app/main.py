@@ -69,22 +69,29 @@ async def save_to_wav(audio_data: bytes, chunk_id: int, client_id: str):
     print(f"Saved WAV file: {file_name} ({len(audio_data)/1024:.1f} KB, {audio_duration:.2f} seconds)")
     print(f"WAV save time: {wav_save_time:.3f} seconds")
     
-    # Process audio with Whisper and save transcript
-    print(f"Starting transcription at {datetime.now().strftime('%H:%M:%S')}")
-    transcription_start_time = time.time()
-    transcript = await process_audio_with_whisper(str(file_path))
-    transcription_time = time.time() - transcription_start_time
-    
-    if transcript:
-        transcript_file = TRANSCRIPTS_DIR / f"transcript_{client_id}_chunk{chunk_id}_{timestamp}.txt"
-        with open(transcript_file, "w") as f:
-            f.write(transcript)
-        print(f"Saved transcript: {transcript_file}")
-        print(f"Total transcription processing time: {transcription_time:.2f} seconds")
+    try:
+        # Process audio with Whisper and save transcript
+        print(f"Starting transcription at {datetime.now().strftime('%H:%M:%S')}")
+        transcription_start_time = time.time()
+        transcript = await process_audio_with_whisper(str(file_path))
+        transcription_time = time.time() - transcription_start_time
         
-        # Calculate real-time factor
-        rtf = transcription_time / audio_duration if audio_duration > 0 else float('inf')
-        print(f"Real-time factor: {rtf:.2f}x (lower is better)")
+        if transcript:
+            transcript_file = TRANSCRIPTS_DIR / f"transcript_{client_id}_chunk{chunk_id}_{timestamp}.txt"
+            with open(transcript_file, "w") as f:
+                f.write(transcript)
+            print(f"Saved transcript: {transcript_file}")
+            print(f"Total transcription processing time: {transcription_time:.2f} seconds")
+            
+            # Calculate real-time factor
+            rtf = transcription_time / audio_duration if audio_duration > 0 else float('inf')
+            print(f"Real-time factor: {rtf:.2f}x (lower is better)")
+        else:
+            print(f"No transcript generated for {file_name}")
+            transcript = ""
+    except Exception as e:
+        print(f"Error in transcription: {e}")
+        transcript = ""
     
     return file_path, transcript
 
@@ -116,23 +123,27 @@ async def websocket_endpoint(websocket: WebSocket):
                     process_start_time = time.time()
                     print(f"\n--- Processing chunk {client_data['chunk_id']} from {client_id} ---")
                     
-                    wav_path, transcript = await save_to_wav(client_data["audio_buffer"], client_data["chunk_id"], client_id)
-                    
-                    # Calculate audio duration for this chunk
-                    chunk_duration = len(client_data["audio_buffer"]) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
-                    client_data["total_audio_duration"] += chunk_duration
-                    client_data["chunks_processed"] += 1
-                    
-                    process_time = time.time() - process_start_time
-                    
-                    # Send response to client with timing information
-                    response_message = f"Processed chunk {client_data['chunk_id']} - {len(transcript or '')} chars transcribed in {process_time:.2f}s"
-                    await websocket.send_text(response_message)
-                    
-                    print(f"Total chunks processed: {client_data['chunks_processed']}")
-                    print(f"Total audio duration: {client_data['total_audio_duration']:.2f} seconds")
-                    print(f"Session duration: {time.time() - client_data['start_time']:.2f} seconds")
-                    print(f"--- Finished processing chunk {client_data['chunk_id']} ---\n")
+                    try:
+                        wav_path, transcript = await save_to_wav(client_data["audio_buffer"], client_data["chunk_id"], client_id)
+                        
+                        # Calculate audio duration for this chunk
+                        chunk_duration = len(client_data["audio_buffer"]) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
+                        client_data["total_audio_duration"] += chunk_duration
+                        client_data["chunks_processed"] += 1
+                        
+                        process_time = time.time() - process_start_time
+                        
+                        # Send response to client with timing information
+                        response_message = f"Processed chunk {client_data['chunk_id']} - {len(transcript or '')} chars transcribed in {process_time:.2f}s"
+                        await websocket.send_text(response_message)
+                        
+                        print(f"Total chunks processed: {client_data['chunks_processed']}")
+                        print(f"Total audio duration: {client_data['total_audio_duration']:.2f} seconds")
+                        print(f"Session duration: {time.time() - client_data['start_time']:.2f} seconds")
+                        print(f"--- Finished processing chunk {client_data['chunk_id']} ---\n")
+                    except Exception as e:
+                        print(f"Error processing chunk: {e}")
+                        await websocket.send_text(f"Error processing chunk {client_data['chunk_id']}: {str(e)}")
 
                 client_data["chunk_id"] = chunk_id
                 client_data["audio_buffer"] = audio_data
@@ -146,7 +157,10 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"Client disconnected: {client_id}")
         client_data = active_streams.get(client_id)
         if client_data and client_data["chunk_id"] is not None:
-            await save_to_wav(client_data["audio_buffer"], client_data["chunk_id"], client_id)
+            try:
+                await save_to_wav(client_data["audio_buffer"], client_data["chunk_id"], client_id)
+            except Exception as e:
+                print(f"Error processing final chunk: {e}")
             
             # Print session summary
             session_duration = time.time() - client_data["start_time"]
@@ -168,4 +182,4 @@ async def get_root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=5000, reload=True) 
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True) 

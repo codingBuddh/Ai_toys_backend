@@ -63,7 +63,8 @@ async def test_whisper_performance(audio_file_path=None):
             "audio_duration": duration,
             "process_time": process_time,
             "transcript_length": len(transcript) if transcript else 0,
-            "has_transcript": bool(transcript)
+            "has_transcript": bool(transcript),
+            "device": "cpu"  # We're only using CPU now
         }
         
         # Add real-time factor if duration is available

@@ -5,60 +5,27 @@ from datetime import datetime
 from pathlib import Path
 import torch
 
-# Initialize the USE_TRANSFORMERS flag with a default value
-USE_TRANSFORMERS = False
-
-# We'll attempt to use the official OpenAI Whisper package
-# If it fails, we'll fall back to the transformers implementation
-try:
-    import whisper
-    print("Using OpenAI's Whisper package for speech recognition")
-except ImportError:
-    # Fallback to the transformers library for Whisper model
-    from transformers import pipeline
-    USE_TRANSFORMERS = True
-    print("Using transformers pipeline for speech recognition")
+# Single implementation - only using OpenAI Whisper
+import whisper
+print("Using OpenAI's Whisper package for speech recognition")
 
 model = None
 
 async def load_model():
-    global model, USE_TRANSFORMERS
+    global model
     if model is None:
         print("Loading Whisper model...")
         start_time = time.time()
         # Load the model in a separate thread to avoid blocking
         loop = asyncio.get_event_loop()
         
-        if not USE_TRANSFORMERS:
-            # Using the official OpenAI Whisper package
-            try:
-                model = await loop.run_in_executor(None, lambda: whisper.load_model("small"))
-                load_time = time.time() - start_time
-                print(f"OpenAI Whisper model loaded successfully! (Took {load_time:.2f} seconds)")
-            except Exception as e:
-                print(f"Error loading OpenAI Whisper model: {e}")
-                print("Falling back to transformers implementation...")
-                from transformers import pipeline
-                USE_TRANSFORMERS = True
-                fallback_start_time = time.time()
-                model = await loop.run_in_executor(None, lambda: pipeline(
-                    "automatic-speech-recognition", 
-                    model="openai/whisper-small",
-                    chunk_length_s=30,
-                    device="cuda" if torch.cuda.is_available() else "cpu"
-                ))
-                load_time = time.time() - fallback_start_time
-                print(f"Transformers Whisper model loaded successfully! (Took {load_time:.2f} seconds)")
-        else:
-            # Using the transformers library
-            model = await loop.run_in_executor(None, lambda: pipeline(
-                "automatic-speech-recognition", 
-                model="openai/whisper-small",
-                chunk_length_s=30,
-                device="cuda" if torch.cuda.is_available() else "cpu"
-            ))
+        try:
+            model = await loop.run_in_executor(None, lambda: whisper.load_model("small"))
             load_time = time.time() - start_time
-            print(f"Transformers Whisper model loaded successfully! (Took {load_time:.2f} seconds)")
+            print(f"Whisper model loaded successfully! (Took {load_time:.2f} seconds)")
+        except Exception as e:
+            print(f"Error loading Whisper model: {e}")
+            raise  # Re-raise the exception since we no longer have a fallback
 
 async def process_audio_with_whisper(audio_file_path: str) -> str:
     """
@@ -88,6 +55,7 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
             print(f"Audio duration: {duration:.2f} seconds")
     except Exception as e:
         print(f"Could not determine audio duration: {e}")
+        duration = None
     
     # Make sure the model is loaded
     model_start_time = time.time()
@@ -101,14 +69,9 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
         transcribe_start_time = time.time()
         loop = asyncio.get_event_loop()
         
-        if not USE_TRANSFORMERS:
-            # Using the official OpenAI Whisper package
-            result = await loop.run_in_executor(None, lambda: model.transcribe(audio_file_path))
-            transcript = result["text"].strip()
-        else:
-            # Using the transformers library
-            result = await loop.run_in_executor(None, lambda: model(audio_file_path))
-            transcript = result["text"].strip()
+        # Using the OpenAI Whisper package
+        result = await loop.run_in_executor(None, lambda: model.transcribe(audio_file_path))
+        transcript = result["text"].strip()
         
         transcribe_time = time.time() - transcribe_start_time
         
@@ -120,11 +83,9 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
         print(f"Transcription completed in {transcribe_time:.2f} seconds")
         
         # Calculate processing speed ratio (audio duration / processing time)
-        try:
+        if duration:
             speed_ratio = duration / transcribe_time
             print(f"Processing speed: {speed_ratio:.2f}x real-time")
-        except:
-            pass
             
         return transcript
         

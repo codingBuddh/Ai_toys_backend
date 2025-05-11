@@ -43,7 +43,7 @@ async def test_model(model_name, audio_file_path, verbose=False):
     print(f"WHISPER MODEL TEST: {model_name}")
     print(f"{'='*80}")
     print(f"Audio file: {audio_file_path}")
-    print(f"Device: {'CUDA/GPU' if torch.cuda.is_available() else 'CPU'}")
+    print(f"Device: CPU (GPU support removed)")
     
     # Ensure file exists
     if not os.path.exists(audio_file_path):
