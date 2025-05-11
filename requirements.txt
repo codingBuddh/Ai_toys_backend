@@ -8,5 +8,6 @@ git+https://github.com/openai/whisper.git
 transformers
 numpy
 python-multipart
-torch
+#torch only for cpu
+torch --extra-index-url https://download.pytorch.org/whl/cpu
 matplotlib
