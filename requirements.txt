@@ -4,10 +4,12 @@ websockets
 ffmpeg-python
 setuptools-rust
 tiktoken
-git+https://github.com/openai/whisper.git
+# git+https://github.com/openai/whisper.git
+torch
+openai-whisper
 numpy
 python-multipart
 # CPU-only version of torch
 # torch --extra-index-url https://download.pytorch.org/whl/cpu
-torch
+
 matplotlib
