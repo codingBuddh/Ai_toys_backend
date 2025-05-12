@@ -22,6 +22,34 @@ This project provides a real-time audio streaming server for ESP32 devices that 
 
 ## Setup
 
+### Using Docker (Recommended)
+
+The easiest way to run this project is using Docker:
+
+1. Install [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+
+2. Build and run the container:
+
+```bash
+docker-compose up -d
+```
+
+The server will start at `http://localhost:5000` and WebSocket endpoint will be available at `ws://localhost:5000/ws/audio`.
+
+3. View logs:
+
+```bash
+docker-compose logs -f
+```
+
+4. Stop the server:
+
+```bash
+docker-compose down
+```
+
+### Manual Setup
+
 1. Create a virtual environment and activate it:
 
 ```bash
@@ -42,7 +70,7 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-The server will start at `http://localhost:8000` and WebSocket endpoint will be available at `ws://localhost:8000/ws/audio`.
+The server will start at `http://localhost:5000` and WebSocket endpoint will be available at `ws://localhost:5000/ws/audio`.
 
 ## Testing Whisper Models
 
@@ -63,7 +91,7 @@ See the [testing_STT/README.md](testing_STT/README.md) for more details on the t
 
 Configure your ESP32 to connect to the WebSocket server and stream audio data. The ESP32 should:
 
-1. Connect to the WebSocket endpoint at `ws://[server-ip]:8000/ws/audio`
+1. Connect to the WebSocket endpoint at `ws://[server-ip]:5000/ws/audio`
 2. Format audio data with a 4-byte chunk ID header followed by PCM audio data
 3. Send audio with the following configuration:
    - Sample Rate: 16000 Hz
@@ -75,12 +103,14 @@ Configure your ESP32 to connect to the WebSocket server and stream audio data. T
 - Python 3.8 or higher
 - FFmpeg installed on your system
 - Rust (for tiktoken, a dependency of Whisper)
+- Docker (optional, for containerized deployment)
 
 ## Server Deployment Notes
 
 - This server is configured to use CPU-only processing for better compatibility with resource-constrained servers
 - The transformers library dependency has been removed to reduce the installation footprint
 - If you're deploying on a server with limited memory, this version should be more stable
+- Docker deployment isolates dependencies and ensures consistent environment across different systems
 
 ## License
 

@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Local development settings
+.env
+.vscode/
+.idea/
+
+# Data directories (will be mounted as volumes)
+recordings/
+transcripts/
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db 
