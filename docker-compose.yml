@@ -8,6 +8,9 @@ services:
     volumes:
       - ./recordings:/app/recordings
       - ./transcripts:/app/transcripts
+      - ./responses:/app/responses
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1 

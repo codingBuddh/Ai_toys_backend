@@ -1,30 +1,80 @@
+"""
+Audio Processing Utility for Whisper Speech-to-Text
+
+This module provides functionality for processing audio files with OpenAI's Whisper
+speech-to-text model. It handles model loading, audio transcription, and performance tracking.
+
+Debug Info:
+- Model loading is done asynchronously to avoid blocking
+- All operations are timed and logged
+- Audio file information (size, duration) is logged
+- Processing speed is calculated and reported
+"""
+
 import os
 import asyncio
 import time
+import logging
+import traceback
 from datetime import datetime
 from pathlib import Path
 import torch
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("whisper_processor.log")
+    ]
+)
+logger = logging.getLogger("whisper_processor")
+
 # Single implementation - only using OpenAI Whisper
 import whisper
-print("Using OpenAI's Whisper package for speech recognition")
+logger.info("Using OpenAI's Whisper package for speech recognition")
 
+# Global model instance
 model = None
+model_name = os.environ.get("WHISPER_MODEL", "small")
 
-async def load_model():
-    global model
+async def load_model(model_size: str = None):
+    """
+    Load the Whisper model asynchronously.
+    
+    Args:
+        model_size: Size of the model to load (tiny, base, small, medium, large)
+                   If None, uses the WHISPER_MODEL env var or defaults to "small"
+    
+    Raises:
+        Exception: If the model fails to load
+        
+    Debug Info:
+        - Model loading time is measured and logged
+        - Model is loaded in a separate thread to avoid blocking
+        - Model size is configurable via environment variable
+    """
+    global model, model_name
+    
+    # Use provided model size or default
+    if model_size:
+        model_name = model_size
+    
     if model is None:
-        print("Loading Whisper model...")
+        logger.info(f"Loading Whisper model '{model_name}'...")
         start_time = time.time()
+        
         # Load the model in a separate thread to avoid blocking
         loop = asyncio.get_event_loop()
         
         try:
-            model = await loop.run_in_executor(None, lambda: whisper.load_model("small"))
+            model = await loop.run_in_executor(None, lambda: whisper.load_model(model_name))
             load_time = time.time() - start_time
-            print(f"Whisper model loaded successfully! (Took {load_time:.2f} seconds)")
+            logger.info(f"Whisper model '{model_name}' loaded successfully! (Took {load_time:.2f} seconds)")
         except Exception as e:
-            print(f"Error loading Whisper model: {e}")
+            logger.error(f"Error loading Whisper model: {e}")
+            logger.error(traceback.format_exc())
             raise  # Re-raise the exception since we no longer have a fallback
 
 async def process_audio_with_whisper(audio_file_path: str) -> str:
@@ -35,16 +85,25 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
         audio_file_path: Path to the WAV audio file
         
     Returns:
-        Transcript text
+        str: Transcript text or empty string if processing failed
+        
+    Debug Info:
+        - Audio file existence is verified
+        - Audio file size and duration are logged
+        - Model loading time is measured and logged
+        - Transcription time is measured and logged
+        - Processing speed ratio is calculated (audio duration / processing time)
+        - Errors are caught and logged
     """
     if not os.path.exists(audio_file_path):
-        print(f"Error: Audio file {audio_file_path} does not exist")
+        logger.error(f"Error: Audio file {audio_file_path} does not exist")
         return ""
     
     file_size_mb = os.path.getsize(audio_file_path) / (1024 * 1024)
-    print(f"Audio file size: {file_size_mb:.2f} MB")
+    logger.info(f"Audio file size: {file_size_mb:.2f} MB")
     
     # Get audio duration if possible
+    duration = None
     try:
         import wave
         with wave.open(audio_file_path, 'rb') as wf:
@@ -52,20 +111,19 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
             frames = wf.getnframes()
             rate = wf.getframerate()
             duration = frames / float(rate)
-            print(f"Audio duration: {duration:.2f} seconds")
+            logger.info(f"Audio duration: {duration:.2f} seconds")
     except Exception as e:
-        print(f"Could not determine audio duration: {e}")
-        duration = None
+        logger.warning(f"Could not determine audio duration: {e}")
     
     # Make sure the model is loaded
     model_start_time = time.time()
     await load_model()
     model_load_time = time.time() - model_start_time
-    print(f"Model preparation took {model_load_time:.2f} seconds")
+    logger.info(f"Model preparation took {model_load_time:.2f} seconds")
     
     try:
         # Transcribe the audio file
-        print(f"Starting transcription at {datetime.now().strftime('%H:%M:%S')}")
+        logger.info(f"Starting transcription at {datetime.now().strftime('%H:%M:%S')}")
         transcribe_start_time = time.time()
         loop = asyncio.get_event_loop()
         
@@ -76,19 +134,53 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
         transcribe_time = time.time() - transcribe_start_time
         
         if not transcript:
-            print(f"Warning: No transcript generated for {audio_file_path}")
+            logger.warning(f"Warning: No transcript generated for {audio_file_path}")
             return ""
             
-        print(f"Generated transcript: {transcript[:50]}...")
-        print(f"Transcription completed in {transcribe_time:.2f} seconds")
+        logger.info(f"Generated transcript: {transcript[:50]}...")
+        logger.info(f"Transcription completed in {transcribe_time:.2f} seconds")
         
         # Calculate processing speed ratio (audio duration / processing time)
         if duration:
             speed_ratio = duration / transcribe_time
-            print(f"Processing speed: {speed_ratio:.2f}x real-time")
+            logger.info(f"Processing speed: {speed_ratio:.2f}x real-time")
+            
+        # Log full transcript at debug level
+        logger.debug(f"Full transcript: {transcript}")
             
         return transcript
         
     except Exception as e:
-        print(f"Error transcribing audio: {e}")
-        return "" 
+        logger.error(f"Error transcribing audio: {e}")
+        logger.error(traceback.format_exc())
+        return ""
+
+async def get_available_models():
+    """
+    Get information about available Whisper models.
+    
+    Returns:
+        dict: Dictionary with model information
+        
+    Debug Info:
+        - Lists all available models with their properties
+        - Indicates which model is currently loaded
+    """
+    models_info = {
+        "tiny": {"parameters": "39M", "english_only": False, "multilingual": True},
+        "base": {"parameters": "74M", "english_only": False, "multilingual": True},
+        "small": {"parameters": "244M", "english_only": False, "multilingual": True},
+        "medium": {"parameters": "769M", "english_only": False, "multilingual": True},
+        "large": {"parameters": "1550M", "english_only": False, "multilingual": True},
+        "tiny.en": {"parameters": "39M", "english_only": True, "multilingual": False},
+        "base.en": {"parameters": "74M", "english_only": True, "multilingual": False},
+        "small.en": {"parameters": "244M", "english_only": True, "multilingual": False},
+        "medium.en": {"parameters": "769M", "english_only": True, "multilingual": False}
+    }
+    
+    # Mark currently loaded model
+    global model_name
+    for name in models_info:
+        models_info[name]["loaded"] = (name == model_name)
+    
+    return models_info 

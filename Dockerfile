@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p recordings transcripts
+RUN mkdir -p recordings transcripts responses
 
 # Expose the port the app runs on
 EXPOSE 5000

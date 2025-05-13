@@ -6,12 +6,17 @@ ffmpeg-python
 setuptools-rust
 tiktoken
 # git+https://github.com/openai/whisper.git
-torch
+# torch
 openai-whisper
 
 python-multipart
 # CPU-only version of torch
-# torch --extra-index-url https://download.pytorch.org/whl/cpu
+torch --extra-index-url https://download.pytorch.org/whl/cpu
 
 matplotlib
-#for the 
+
+# LLM dependencies
+langchain-openai
+langchain-core
+python-dotenv
+openai
