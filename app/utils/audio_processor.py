@@ -37,7 +37,7 @@ logger.info("Using OpenAI's Whisper package for speech recognition")
 
 # Global model instance
 model = None
-model_name = os.environ.get("WHISPER_MODEL", "small")
+model_name = os.environ.get("WHISPER_MODEL", "tiny.en")  # Default to tiny.en for speed
 
 async def load_model(model_size: str = None):
     """
@@ -45,7 +45,7 @@ async def load_model(model_size: str = None):
     
     Args:
         model_size: Size of the model to load (tiny, base, small, medium, large)
-                   If None, uses the WHISPER_MODEL env var or defaults to "small"
+                   If None, uses the WHISPER_MODEL env var or defaults to "tiny.en"
     
     Raises:
         Exception: If the model fails to load
@@ -60,6 +60,11 @@ async def load_model(model_size: str = None):
     # Use provided model size or default
     if model_size:
         model_name = model_size
+    
+    # Force tiny.en model if env var is not respected
+    if model_name not in ["tiny.en", "tiny", "base.en", "base"]:
+        logger.warning(f"Model '{model_name}' may be too large for this application. Falling back to tiny.en")
+        model_name = "tiny.en"
     
     if model is None:
         logger.info(f"Loading Whisper model '{model_name}'...")
@@ -112,6 +117,11 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
             rate = wf.getframerate()
             duration = frames / float(rate)
             logger.info(f"Audio duration: {duration:.2f} seconds")
+            
+            # Skip very short audio files to avoid processing errors
+            if duration < 0.5:
+                logger.warning(f"Audio file too short ({duration:.2f}s), skipping transcription")
+                return ""
     except Exception as e:
         logger.warning(f"Could not determine audio duration: {e}")
     
@@ -127,8 +137,22 @@ async def process_audio_with_whisper(audio_file_path: str) -> str:
         transcribe_start_time = time.time()
         loop = asyncio.get_event_loop()
         
-        # Using the OpenAI Whisper package
-        result = await loop.run_in_executor(None, lambda: model.transcribe(audio_file_path))
+        # Using the OpenAI Whisper package with optimized parameters
+        transcription_options = {
+            'language': 'en',             # Specify English for faster processing
+            'fp16': False,                # Avoid FP16 warning on CPU
+            'beam_size': 3,               # Reduced beam size for faster processing
+            'best_of': 1,                 # Only return the best result
+            'temperature': (0.0, 0.2, 0.4), # Use lower temperature for simpler transcription
+            'compression_ratio_threshold': 2.4, # Adjusted threshold
+            'condition_on_previous_text': True,
+            'initial_prompt': "This is audio from an ESP32 microphone."
+        }
+        
+        result = await loop.run_in_executor(
+            None, 
+            lambda: model.transcribe(audio_file_path, **transcription_options)
+        )
         transcript = result["text"].strip()
         
         transcribe_time = time.time() - transcribe_start_time
