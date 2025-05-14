@@ -126,56 +126,34 @@ async def save_to_wav(audio_data: bytes, chunk_id: int, client_id: str):
         
     Returns:
         tuple: (file_path, transcript, llm_response)
-        
-    Debug Info:
-        - Audio duration is calculated based on data length and audio config
-        - All operations are timed and logged
-        - Whisper processing errors are caught and logged
-        - LLM processing errors are caught and logged
-        - File paths use timestamp format for uniqueness
     """
     timestamp = datetime.utcnow().isoformat().replace(":", "-").replace(".", "-")
     file_name = f"recording_{client_id}_chunk{chunk_id}_{timestamp}.wav"
     file_path = RECORDINGS_DIR / file_name
 
-    # Measure timing for saving WAV file
-    wav_start_time = time.time()
+    # Save WAV file with header
     header = create_wav_header(len(audio_data))
     with open(file_path, "wb") as f:
         f.write(header + audio_data)
-    wav_save_time = time.time() - wav_start_time
     
     # Calculate audio duration
     audio_duration = len(audio_data) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
-    
-    logger.info(f"Saved WAV file: {file_name} ({len(audio_data)/1024:.1f} KB, {audio_duration:.2f} seconds)")
-    logger.info(f"WAV save time: {wav_save_time:.3f} seconds")
     
     transcript = ""
     llm_response = ""
     
     try:
         # Process audio with Whisper and save transcript
-        logger.info(f"Starting transcription at {datetime.now().strftime('%H:%M:%S')}")
-        transcription_start_time = time.time()
         transcript = await process_audio_with_whisper(str(file_path))
-        transcription_time = time.time() - transcription_start_time
         
         if transcript:
             transcript_file = TRANSCRIPTS_DIR / f"transcript_{client_id}_chunk{chunk_id}_{timestamp}.txt"
             with open(transcript_file, "w") as f:
                 f.write(transcript)
-            logger.info(f"Saved transcript: {transcript_file}")
-            logger.info(f"Total transcription processing time: {transcription_time:.2f} seconds")
-            
-            # Calculate real-time factor
-            rtf = transcription_time / audio_duration if audio_duration > 0 else float('inf')
-            logger.info(f"Real-time factor: {rtf:.2f}x (lower is better)")
             
             # Process transcript with LLM if available
             if llm_processor:
                 logger.info("Processing transcript with LLM...")
-                llm_start_time = time.time()
                 
                 # System prompt for the LLM
                 system_prompt = """
@@ -186,26 +164,17 @@ async def save_to_wav(audio_data: bytes, chunk_id: int, client_id: str):
                 
                 # Process with LLM
                 llm_result = await llm_processor.process_transcript(transcript, system_prompt)
-                llm_time = time.time() - llm_start_time
                 
                 if llm_result.get("success"):
                     llm_response = llm_result["response"]
                     response_file = RESPONSES_DIR / f"response_{client_id}_chunk{chunk_id}_{timestamp}.txt"
                     with open(response_file, "w") as f:
                         f.write(llm_response)
-                    logger.info(f"LLM processing time: {llm_time:.2f} seconds")
-                    logger.info(f"Saved LLM response to: {response_file}")
-                    logger.info(f"LLM Response: {llm_response[:100]}...")
+                    logger.info(f"LLM response generated: \"{llm_response[:50]}{'...' if len(llm_response) > 50 else ''}\"")
                 else:
                     logger.error(f"LLM processing failed: {llm_result.get('error')}")
-                    # Save error information for debugging
-                    error_file = RESPONSES_DIR / f"error_{client_id}_chunk{chunk_id}_{timestamp}.txt"
-                    with open(error_file, "w") as f:
-                        f.write(f"Error processing transcript with LLM: {llm_result.get('error')}\n\n")
-                        f.write(f"Transcript: {transcript}")
         else:
-            logger.warning(f"No transcript generated for {file_name}")
-            transcript = ""
+            logger.warning(f"No transcript generated")
     except Exception as e:
         logger.error(f"Error in transcription: {e}")
         logger.error(traceback.format_exc())
@@ -269,15 +238,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     client_data["accumulated_audio"] += client_data["audio_buffer"]
                     client_data["accumulated_chunks"] += 1
                     
-                    # Log accumulated size periodically
+                    # Log accumulated size only when it crosses significant thresholds
                     total_accumulated_kb = len(client_data["accumulated_audio"]) / 1024
-                    logger.info(f"Accumulated audio data: {total_accumulated_kb:.1f} KB from {client_data['accumulated_chunks']} chunks")
+                    if client_data["accumulated_chunks"] == 1 or client_data["accumulated_chunks"] % 5 == 0:
+                        logger.info(f"Accumulated audio data: {total_accumulated_kb:.1f} KB from {client_data['accumulated_chunks']} chunks")
                     
-                    # Only process if we have accumulated enough data (at least 2 seconds)
-                    # 16kHz * 16bit * 1 channel * 2 seconds = 64000 bytes
-                    if len(client_data["accumulated_audio"]) >= 64000:
+                    # Only process if we have accumulated enough data (at least 10 seconds)
+                    # 16kHz * 16bit * 1 channel * 10 seconds = 320000 bytes
+                    if len(client_data["accumulated_audio"]) >= 320000:
                         process_start_time = time.time()
-                        logger.info(f"\n--- Processing accumulated chunks ({client_data['accumulated_chunks']}) from {client_id} ---")
+                        logger.info(f"\n--- Audio recording complete. Creating transcript... ---")
                         
                         try:
                             # Create a timestamp for the combined file
@@ -292,9 +262,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             
                             # Calculate audio duration for the combined data
                             combined_duration = len(client_data["accumulated_audio"]) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
-                            logger.info(f"Saved combined WAV file: {combined_file_name} ({len(client_data['accumulated_audio'])/1024:.1f} KB, {combined_duration:.2f} seconds)")
+                            logger.info(f"Saved combined WAV file: {combined_file_name} ({combined_duration:.2f} seconds)")
                             
                             # Process the combined audio file
+                            logger.info("Generating transcript from audio recording...")
                             wav_path, transcript, llm_response = await save_to_wav(client_data["accumulated_audio"], 0, client_id + "_combined")
                             
                             # Update client data
@@ -320,10 +291,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             client_data["accumulated_audio"] = b""
                             client_data["accumulated_chunks"] = 0
                             
-                            logger.info(f"Total chunks processed: {client_data['chunks_processed']}")
-                            logger.info(f"Total audio duration: {client_data['total_audio_duration']:.2f} seconds")
-                            logger.info(f"Session duration: {time.time() - client_data['start_time']:.2f} seconds")
-                            logger.info(f"--- Finished processing accumulated audio ---\n")
+                            logger.info(f"Transcript generated and sent to client. Processing time: {process_time:.2f}s")
                         except Exception as e:
                             logger.error(f"Error processing accumulated audio: {e}")
                             logger.error(traceback.format_exc())
@@ -335,13 +303,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Start collecting a new chunk
                 client_data["chunk_id"] = chunk_id
                 client_data["audio_buffer"] = audio_data
-                logger.info(f"Started new chunk {chunk_id} from {client_id} - {len(audio_data)/1024:.1f} KB")
+                
+                # Only log the first chunk and then every 10th chunk
+                if chunk_id == 0 or chunk_id % 10 == 0:
+                    logger.info(f"Received chunk {chunk_id} from {client_id} - {len(audio_data)/1024:.1f} KB")
             else:
                 # Continue collecting data for the current chunk
                 client_data["audio_buffer"] += audio_data
-                # Periodically report buffer size
-                if len(client_data["audio_buffer"]) % 10240 < 1024:  # Report roughly every 10KB
-                    logger.info(f"Chunk {chunk_id} buffer size: {len(client_data['audio_buffer'])/1024:.1f} KB")
+                
+                # Don't log every buffer size update - too verbose
+                # Only log if buffer size crosses 100KB thresholds
+                buffer_size_kb = len(client_data["audio_buffer"]) / 1024
+                if int(buffer_size_kb / 100) > int((buffer_size_kb - len(audio_data)/1024) / 100):
+                    logger.info(f"Chunk {chunk_id} buffer size: {buffer_size_kb:.1f} KB")
     except WebSocketDisconnect:
         logger.info(f"Client disconnected: {client_id}")
         client_data = active_streams.get(client_id)
@@ -352,50 +326,39 @@ async def websocket_endpoint(websocket: WebSocket):
                     client_data["accumulated_audio"] += client_data["audio_buffer"]
                     client_data["accumulated_chunks"] += 1
                 
-                # Process any accumulated audio if we have enough data
-                if client_data["accumulated_audio"] and len(client_data["accumulated_audio"]) >= 16000:  # At least 0.5 seconds
-                    logger.info(f"\n--- Processing final accumulated audio from {client_id} ---")
+                # Process any accumulated audio (process whatever we have, but log differently based on length)
+                if client_data["accumulated_audio"]:
+                    audio_duration = len(client_data["accumulated_audio"]) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
                     
-                    # Save and process accumulated audio
-                    timestamp = datetime.utcnow().isoformat().replace(":", "-").replace(".", "-")
-                    combined_file_name = f"recording_{client_id}_final_{timestamp}.wav"
-                    combined_file_path = RECORDINGS_DIR / combined_file_name
-                    
-                    # Save all accumulated audio as a single WAV file
-                    header = create_wav_header(len(client_data["accumulated_audio"]))
-                    with open(combined_file_path, "wb") as f:
-                        f.write(header + client_data["accumulated_audio"])
-                    
-                    # Calculate audio duration for the combined data
-                    combined_duration = len(client_data["accumulated_audio"]) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
-                    logger.info(f"Saved final combined WAV file: {combined_file_name} ({len(client_data['accumulated_audio'])/1024:.1f} KB, {combined_duration:.2f} seconds)")
-                    
-                    # Process the combined audio
-                    await save_to_wav(client_data["accumulated_audio"], 999, client_id + "_final")
-                    
-                    client_data["total_audio_duration"] += combined_duration
-                    client_data["chunks_processed"] += client_data["accumulated_chunks"]
-                    
-                    logger.info(f"--- Final audio processing complete ---\n")
+                    if audio_duration >= 1.0:  # At least 1 second
+                        logger.info(f"Processing final audio recording ({audio_duration:.2f} seconds)")
+                        
+                        # Save and process accumulated audio
+                        timestamp = datetime.utcnow().isoformat().replace(":", "-").replace(".", "-")
+                        combined_file_name = f"recording_{client_id}_final_{timestamp}.wav"
+                        combined_file_path = RECORDINGS_DIR / combined_file_name
+                        
+                        # Save all accumulated audio as a single WAV file
+                        header = create_wav_header(len(client_data["accumulated_audio"]))
+                        with open(combined_file_path, "wb") as f:
+                            f.write(header + client_data["accumulated_audio"])
+                        
+                        logger.info(f"Generating transcript from final audio...")
+                        
+                        # Process the combined audio
+                        await save_to_wav(client_data["accumulated_audio"], 999, client_id + "_final")
+                        
+                        client_data["total_audio_duration"] += audio_duration
+                        client_data["chunks_processed"] += client_data["accumulated_chunks"]
+                    else:
+                        logger.info(f"Audio too short ({audio_duration:.2f}s), skipping transcription")
             except Exception as e:
                 logger.error(f"Error processing final audio: {e}")
                 logger.error(traceback.format_exc())
             
-            # Print session summary
+            # Print simplified session summary
             session_duration = time.time() - client_data["start_time"]
-            logger.info(f"\n--- Session Summary for {client_id} ---")
-            logger.info(f"Session duration: {session_duration:.2f} seconds")
-            logger.info(f"Chunks processed: {client_data['chunks_processed']}")
-            logger.info(f"Total audio duration: {client_data['total_audio_duration']:.2f} seconds")
-            
-            # Calculate average processing factor
-            if client_data['total_audio_duration'] > 0:
-                avg_factor = session_duration/client_data['total_audio_duration']
-                logger.info(f"Average processing factor: {avg_factor:.2f}x real-time")
-            else:
-                logger.info("Average processing factor: N/A (no audio processed)")
-                
-            logger.info(f"--- End of Session ---\n")
+            logger.info(f"Session ended: {client_data['chunks_processed']} chunks, {client_data['total_audio_duration']:.2f}s audio")
             
         active_streams.pop(client_id, None)
     except Exception as e:
