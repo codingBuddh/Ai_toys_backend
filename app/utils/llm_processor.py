@@ -113,10 +113,14 @@ class LLMProcessor:
             if not system_prompt:
                 system_prompt = "You are a helpful assistant. Respond to the user's message concisely and helpfully."
             
+            # Ensure the system prompt instructs for a one-line response
+            if "one line" not in system_prompt.lower() and "single line" not in system_prompt.lower():
+                system_prompt += " Provide only a single line response, no matter how complex the query."
+            
             # Create prompt template
             prompt = ChatPromptTemplate.from_messages([
-                ["system", system_prompt],
-                ["user", "{transcript}"]
+                ("system", system_prompt),
+                ("human", "{transcript}")
             ])
             
             # Create chain
