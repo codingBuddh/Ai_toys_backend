@@ -155,13 +155,25 @@ async def save_to_wav(audio_data: bytes, chunk_id: int, client_id: str):
             if llm_processor:
                 logger.info("Processing transcript with LLM...")
                 
-                # System prompt for the LLM
+                # ==========================================
+                # CUSTOMIZE YOUR LLM PROMPT HERE
+                # ==========================================
+                # This system prompt controls how the AI responds to the transcript
+                # Modify this prompt to customize the AI's behavior and response style
                 system_prompt = """
                 You are a helpful assistant responding to spoken input. 
                 The user is speaking to you through a speech-to-text system.
-                Respond concisely in a SINGLE LINE only. Do not use multiple paragraphs or bullet points.
+                
+                Respond concisely in a two or three lines only. Do not use multiple paragraphs or bullet points. just plain simple text
                 Keep your response brief but informative.
+                
+                Be friendly and conversational in your response.
+                If the user asks a question, provide a helpful answer.
+                If the user gives a command, acknowledge it and respond appropriately.
                 """
+                # ==========================================
+                # END OF CUSTOMIZABLE PROMPT
+                # ==========================================
                 
                 # Process with LLM
                 llm_result = await llm_processor.process_transcript(transcript, system_prompt)
@@ -231,12 +243,13 @@ async def websocket_endpoint(websocket: WebSocket):
             
             # Check if this is the termination marker (0xFFFFFFFF)
             if chunk_id == 0xFFFFFFFF:
-                logger.info(f"Received termination marker from {client_id} - processing accumulated audio")
+                current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                logger.info(f"[{current_time}] Received termination marker from {client_id} - processing accumulated audio")
                 
                 client_data = active_streams[client_id]
                 if client_data["accumulated_audio"]:
                     process_start_time = time.time()
-                    logger.info(f"\n--- Audio recording complete. Creating transcript... ---")
+                    logger.info(f"[{current_time}] --- Audio recording complete ({client_data['accumulated_chunks']} chunks). Creating transcript... ---")
                     
                     try:
                         # Create a timestamp for the combined file
@@ -251,10 +264,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         # Calculate audio duration for the combined data
                         combined_duration = len(client_data["accumulated_audio"]) / (SAMPLE_RATE * NUM_CHANNELS * BITS_PER_SAMPLE / 8)
-                        logger.info(f"Saved combined WAV file: {combined_file_name} ({combined_duration:.2f} seconds)")
+                        current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                        logger.info(f"[{current_time}] Saved combined WAV file: {combined_file_name} ({combined_duration:.2f} seconds)")
                         
                         # Process the combined audio file
-                        logger.info("Generating transcript from audio recording...")
+                        current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                        logger.info(f"[{current_time}] Generating transcript from audio recording...")
                         wav_path, transcript, llm_response = await save_to_wav(client_data["accumulated_audio"], 0, client_id + "_combined")
                         
                         # Update client data
@@ -280,9 +295,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         client_data["accumulated_audio"] = b""
                         client_data["accumulated_chunks"] = 0
                         
-                        logger.info(f"Transcript: \"{transcript}\"")
-                        logger.info(f"LLM Response: \"{llm_response}\"")
-                        logger.info(f"Processing time: {process_time:.2f}s")
+                        # Log the full transcript and LLM response
+                        logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Full Transcript: \"{transcript}\"")
+                        logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] LLM Response: \"{llm_response}\"")
+                        logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Total processing time: {process_time:.2f}s")
                     except Exception as e:
                         logger.error(f"Error processing accumulated audio: {e}")
                         logger.error(traceback.format_exc())
@@ -305,24 +321,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Log accumulated size only when it crosses significant thresholds
                     total_accumulated_kb = len(client_data["accumulated_audio"]) / 1024
                     if client_data["accumulated_chunks"] == 1 or client_data["accumulated_chunks"] % 5 == 0:
-                        logger.info(f"Accumulated audio data: {total_accumulated_kb:.1f} KB from {client_data['accumulated_chunks']} chunks")
+                        current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                        logger.info(f"[{current_time}] Accumulated: {total_accumulated_kb:.1f} KB from {client_data['accumulated_chunks']} chunks")
                 
                 # Start collecting a new chunk
                 client_data["chunk_id"] = chunk_id
                 client_data["audio_buffer"] = audio_data
                 
-                # Only log the first chunk and then every 10th chunk
-                if chunk_id == 0 or chunk_id % 10 == 0:
-                    logger.info(f"Received chunk {chunk_id} from {client_id} - {len(audio_data)/1024:.1f} KB")
+                # Log chunk reception with timestamp
+                current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                if chunk_id == 0:
+                    logger.info(f"[{current_time}] Started receiving audio chunks from {client_id}")
+                
+                # Only log the first chunk and then every 5th chunk
+                if chunk_id == 0 or chunk_id % 5 == 0:
+                    logger.info(f"[{current_time}] Chunk {chunk_id} received - {len(audio_data)/1024:.1f} KB")
             else:
                 # Continue collecting data for the current chunk
                 client_data["audio_buffer"] += audio_data
                 
-                # Don't log every buffer size update - too verbose
-                # Only log if buffer size crosses 100KB thresholds
+                # Only log significant buffer size milestones
                 buffer_size_kb = len(client_data["audio_buffer"]) / 1024
-                if int(buffer_size_kb / 100) > int((buffer_size_kb - len(audio_data)/1024) / 100):
-                    logger.info(f"Chunk {chunk_id} buffer size: {buffer_size_kb:.1f} KB")
+                if int(buffer_size_kb / 50) > int((buffer_size_kb - len(audio_data)/1024) / 50):
+                    current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                    logger.info(f"[{current_time}] Chunk {chunk_id} buffer: {buffer_size_kb:.1f} KB")
     except WebSocketDisconnect:
         logger.info(f"Client disconnected: {client_id}")
         client_data = active_streams.get(client_id)

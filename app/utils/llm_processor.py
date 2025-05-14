@@ -107,7 +107,8 @@ class LLMProcessor:
             
         try:
             start_time = time.time()
-            logger.info(f"Processing transcript: {transcript[:50]}...")
+            # Log the full transcript
+            logger.info(f"Processing full transcript: \"{transcript}\"")
             
             # Create default system prompt if none provided
             if not system_prompt:
@@ -130,7 +131,8 @@ class LLMProcessor:
             response = await chain.ainvoke({"transcript": transcript})
             processing_time = time.time() - start_time
             
-            logger.info(f"LLM Response: {response[:100]}...")
+            # Log the full response
+            logger.info(f"Full LLM Response: \"{response}\"")
             logger.info(f"Processing time: {processing_time:.2f} seconds")
             
             return {
