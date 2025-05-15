@@ -31,9 +31,18 @@ import json
 
 from app.utils.audio_processor import process_audio_with_whisper
 from app.utils.llm_processor import LLMProcessor
+from app.utils.tts_processor import TTSProcessor
 
 # Configuration options
 VERBOSE_LOGGING = False  # Set to True for detailed chunk-by-chunk logging
+ENABLE_TTS = True        # Set to False to disable Text-to-Speech functionality
+
+# TTS Configuration
+TTS_CREDENTIALS_PATH = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", None)
+TTS_CREDENTIALS_FILE = os.environ.get("TTS_CREDENTIALS_FILE", "google_credentials.json")
+TTS_DEFAULT_VOICE = os.environ.get("TTS_DEFAULT_VOICE", "en-US-Wavenet-D")
+TTS_DEFAULT_LANGUAGE = os.environ.get("TTS_DEFAULT_LANGUAGE", "en-US")
+TTS_SAVE_AUDIO = os.environ.get("TTS_SAVE_AUDIO", "false").lower() == "true"
 
 # Configure logging
 logging.basicConfig(
@@ -74,11 +83,46 @@ except Exception as e:
     logger.error(f"Failed to initialize LLM Processor: {e}")
     logger.error(traceback.format_exc())
 
+# Initialize TTS processor if enabled
+tts_processor = None
+if ENABLE_TTS:
+    try:
+        # Try loading credentials from specified file first
+        credentials_json = None
+        if TTS_CREDENTIALS_FILE and os.path.exists(TTS_CREDENTIALS_FILE):
+            try:
+                with open(TTS_CREDENTIALS_FILE, "r") as f:
+                    credentials_json = f.read()
+                logger.info(f"Loaded TTS credentials from {TTS_CREDENTIALS_FILE}")
+            except Exception as e:
+                logger.error(f"Failed to read TTS credentials file: {e}")
+        
+        # Initialize TTS processor with credentials
+        tts_processor = TTSProcessor(
+            credentials_path=TTS_CREDENTIALS_PATH,
+            credentials_json=credentials_json
+        )
+        
+        # List available voices if in verbose mode
+        if VERBOSE_LOGGING:
+            voices = TTSProcessor.get_available_voices(tts_processor.client)
+            logger.info(f"Available TTS voices: {', '.join(voices[:10])}{'...' if len(voices) > 10 else ''}")
+        
+        logger.info("TTS Processor initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize TTS Processor: {e}")
+        logger.error(traceback.format_exc())
+
 # Print startup message
 logger.info(f"Server starting...")
 logger.info(f"Recordings will be saved to: {RECORDINGS_DIR.absolute()}")
 logger.info(f"Transcripts will be saved to: {TRANSCRIPTS_DIR.absolute()}")
 logger.info(f"LLM Responses will be saved to: {RESPONSES_DIR.absolute()}")
+if ENABLE_TTS:
+    logger.info(f"TTS is enabled with voice: {TTS_DEFAULT_VOICE}")
+    logger.info(f"TTS language: {TTS_DEFAULT_LANGUAGE}")
+else:
+    logger.info(f"TTS is disabled")
 
 # Dictionary to track active WebSocket streams
 active_streams = {}
@@ -295,8 +339,41 @@ async def websocket_endpoint(websocket: WebSocket):
                             "timestamp": datetime.now().isoformat()
                         }
                         
+                        # Generate TTS audio if enabled
+                        if ENABLE_TTS and tts_processor and llm_response:
+                            try:
+                                tts_start_time = time.time()
+                                audio_content = await tts_processor.text_to_speech(
+                                    text=llm_response,
+                                    voice_name=TTS_DEFAULT_VOICE,
+                                    language_code=TTS_DEFAULT_LANGUAGE,
+                                    save_file=TTS_SAVE_AUDIO,
+                                    client_id=client_id
+                                )
+                                tts_time = time.time() - tts_start_time
+                                
+                                if audio_content:
+                                    # Include TTS audio info in response
+                                    response_data["tts_audio"] = {
+                                        "available": True,
+                                        "size": len(audio_content),
+                                        "format": "mp3",
+                                        "voice": TTS_DEFAULT_VOICE,
+                                        "language": TTS_DEFAULT_LANGUAGE,
+                                        "process_time": f"{tts_time:.2f}s"
+                                    }
+                                    logger.info(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] TTS audio generated: {len(audio_content)/1024:.1f} KB")
+                            except Exception as e:
+                                logger.error(f"Error generating TTS audio: {e}")
+                                response_data["tts_audio"] = {"available": False, "error": str(e)}
+                        
                         # Send response to client with transcript and LLM response
                         await websocket.send_json(response_data)
+                        
+                        # Send TTS audio if available
+                        if ENABLE_TTS and tts_processor and llm_response and audio_content:
+                            await websocket.send_bytes(audio_content)
+                            logger.info(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Sent TTS audio to {client_id}")
                         
                         # Reset accumulated data after processing
                         client_data["accumulated_audio"] = b""
@@ -417,6 +494,135 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(traceback.format_exc())
         active_streams.pop(client_id, None)
 
+@app.websocket("/ws/tts")
+async def tts_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for streaming TTS audio responses to clients.
+    
+    This endpoint:
+    1. Accepts WebSocket connections
+    2. Receives text messages from clients
+    3. Converts text to speech using Google Cloud TTS
+    4. Streams audio data back to the client
+    
+    Debug Info:
+        - Client connections are logged with unique IDs
+        - TTS requests are logged
+        - Audio responses are logged
+        - Errors are caught and reported to the client
+    """
+    await websocket.accept()
+    
+    # Set WebSocket ping interval and timeout
+    websocket._ping_interval = 20.0  # Send ping every 20 seconds
+    websocket._ping_timeout = 60.0   # Wait 60 seconds for pong response
+    
+    client_id = f"{websocket.client.host}_{websocket.client.port}"
+    connection_time = datetime.now().strftime('%H:%M:%S')
+    logger.info(f"TTS client connected: {client_id} at {connection_time}")
+
+    if not tts_processor:
+        logger.error(f"TTS is not available. Closing connection with {client_id}")
+        await websocket.close(code=1008, reason="TTS service not available")
+        return
+
+    # Store client-specific voice preferences
+    client_voice = TTS_DEFAULT_VOICE
+    client_language = TTS_DEFAULT_LANGUAGE
+
+    try:
+        while True:
+            # Receive text message from client
+            message = await websocket.receive_text()
+            
+            # Check for special commands
+            if message.startswith("/voice:"):
+                # Format: /voice:en-US-Wavenet-D
+                voice_name = message[7:].strip()
+                client_voice = voice_name
+                await websocket.send_json({
+                    "status": "voice_changed",
+                    "voice": voice_name
+                })
+                logger.info(f"Voice changed to {voice_name} for {client_id}")
+                continue
+                
+            elif message.startswith("/language:"):
+                # Format: /language:en-US
+                language_code = message[10:].strip()
+                client_language = language_code
+                await websocket.send_json({
+                    "status": "language_changed",
+                    "language": language_code
+                })
+                logger.info(f"Language changed to {language_code} for {client_id}")
+                continue
+                
+            elif message.startswith("/voices"):
+                # List available voices
+                try:
+                    voices = TTSProcessor.get_available_voices(tts_processor.client)
+                    await websocket.send_json({
+                        "status": "voices_list",
+                        "voices": voices
+                    })
+                    logger.info(f"Sent list of {len(voices)} voices to {client_id}")
+                except Exception as e:
+                    logger.error(f"Error listing voices: {e}")
+                    await websocket.send_json({
+                        "status": "error",
+                        "message": f"Error listing voices: {str(e)}"
+                    })
+                continue
+                
+            current_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+            logger.info(f"[{current_time}] TTS request from {client_id}: \"{message[:50]}{'...' if len(message) > 50 else ''}\"")
+            
+            # Process text to speech
+            try:
+                start_time = time.time()
+                audio_content = await tts_processor.text_to_speech(
+                    text=message,
+                    voice_name=client_voice,
+                    language_code=client_language,
+                    save_file=TTS_SAVE_AUDIO,
+                    client_id=client_id
+                )
+                process_time = time.time() - start_time
+                
+                if audio_content:
+                    # Send audio size first so client knows what to expect
+                    await websocket.send_json({
+                        "status": "audio_ready",
+                        "size": len(audio_content),
+                        "format": "mp3",
+                        "voice": client_voice,
+                        "language": client_language,
+                        "process_time": f"{process_time:.2f}s"
+                    })
+                    
+                    # Then send the actual audio data
+                    await websocket.send_bytes(audio_content)
+                    logger.info(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Sent {len(audio_content)/1024:.1f} KB audio to {client_id}")
+                else:
+                    await websocket.send_json({
+                        "status": "error",
+                        "message": "Failed to generate audio"
+                    })
+            except Exception as e:
+                logger.error(f"Error processing TTS request: {e}")
+                logger.error(traceback.format_exc())
+                await websocket.send_json({
+                    "status": "error",
+                    "message": f"Error processing TTS request: {str(e)}"
+                })
+                
+    except WebSocketDisconnect:
+        logger.info(f"TTS client disconnected: {client_id}")
+    except Exception as e:
+        logger.error(f"Error in TTS WebSocket connection: {e}")
+        logger.error(traceback.format_exc())
+
 @app.get("/")
 async def get_root():
     """
@@ -445,13 +651,15 @@ async def health_check():
     """
     whisper_status = "available"
     llm_status = "available" if llm_processor else "unavailable"
+    tts_status = "available" if tts_processor else "unavailable"
     
     return {
         "status": "healthy",
         "components": {
             "server": "running",
             "whisper": whisper_status,
-            "llm": llm_status
+            "llm": llm_status,
+            "tts": tts_status
         },
         "active_connections": len(active_streams),
         "uptime": time.time() - app.state.start_time if hasattr(app.state, "start_time") else 0
